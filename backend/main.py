@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from backend.ai_provider import LocalAIError, chat as llama_chat, context_length, model_name, save_context_length
 from backend.automation import AutoApplyError, extract_report_jobs_html, import_report_jobs, run_job_applications
 from backend.browser_service import BrowserConnectionError, gmail_messages, read_gmail_message, read_linkedin_profile
-from backend.credential_service import protect_text, unprotect_text
+from backend.credential_service import delete_protected_text, protect_text, unprotect_text
 from backend.linkedin_service import evaluate_linkedin
 from backend.job_search_service import JobSearchError, discover_jobs
 from backend.logging_service import initialize_logs, install_exception_hooks, log_ai_interaction, log_error
@@ -328,18 +328,25 @@ def save_site_credentials(site_id: int, payload: CredentialInput) -> dict:
         current = db.execute("SELECT password_encrypted FROM site_credentials WHERE site_id=?", (site_id,)).fetchone()
         if not payload.password and not current:
             raise HTTPException(422, "Informe a senha")
-        password = protect_text(payload.password) if payload.password else current["password_encrypted"]
+        password = protect_text(payload.password, f"site:{site_id}:password") if payload.password else current["password_encrypted"]
         db.execute("""INSERT INTO site_credentials(site_id,identifier_encrypted,password_encrypted,created_at,updated_at)
             VALUES(?,?,?,?,?) ON CONFLICT(site_id) DO UPDATE SET identifier_encrypted=excluded.identifier_encrypted,
             password_encrypted=excluded.password_encrypted,updated_at=excluded.updated_at""",
-            (site_id, protect_text(payload.identifier), password, now, now))
+            (site_id, protect_text(payload.identifier, f"site:{site_id}:identifier"), password, now, now))
     return {"site_id": site_id, "configured": True}
 
 
 @app.delete("/api/sites/{site_id}/credentials", status_code=204)
 def delete_site_credentials(site_id: int) -> Response:
     with connect() as db:
+        row = db.execute(
+            "SELECT identifier_encrypted,password_encrypted FROM site_credentials WHERE site_id=?",
+            (site_id,),
+        ).fetchone()
         db.execute("DELETE FROM site_credentials WHERE site_id=?", (site_id,))
+    if row:
+        delete_protected_text(row["identifier_encrypted"])
+        delete_protected_text(row["password_encrypted"])
     return Response(status_code=204)
 
 
@@ -369,8 +376,15 @@ def update_site(site_id: int, payload: SiteInput) -> dict:
 @app.delete("/api/sites/{site_id}", status_code=204)
 def delete_site(site_id: int) -> Response:
     with connect() as db:
+        credentials = db.execute(
+            "SELECT identifier_encrypted,password_encrypted FROM site_credentials WHERE site_id=?",
+            (site_id,),
+        ).fetchone()
         if db.execute("DELETE FROM sites WHERE id=?", (site_id,)).rowcount == 0:
             raise HTTPException(404, "Site não encontrado")
+    if credentials:
+        delete_protected_text(credentials["identifier_encrypted"])
+        delete_protected_text(credentials["password_encrypted"])
     return Response(status_code=204)
 
 

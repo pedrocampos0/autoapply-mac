@@ -1,180 +1,193 @@
-# AutoApply
+# AutoApply for macOS
 
-AutoApply is a local-first Windows application for organizing remote job sources, importing job reports from Gmail, discovering opportunities with a local language model, and assisting with job applications through a dedicated Chrome profile.
+AutoApply is a local-first job-search workspace for macOS. It organizes remote job sources, imports structured job reports from Gmail, discovers opportunities with a local Ollama model, and assists with applications through a dedicated Google Chrome profile.
 
-The FastAPI backend, SQLite database, browser automation, and Ollama integration all run on your computer. Site credentials are encrypted with Windows Data Protection API (DPAPI) before they are stored.
+The FastAPI backend, SQLite database, browser automation, and AI model run locally. Website credentials are stored in macOS Keychain; the database contains only opaque Keychain references.
 
 > [!WARNING]
-> Browser-assisted applications can submit real forms. Review your candidate profile and test the workflow carefully before using it with live vacancies. CAPTCHA, MFA, missing files, and unknown required answers are intentionally left for human review.
+> Browser-assisted applications can submit real forms. Review your candidate profile and test the workflow carefully before using live vacancies. AutoApply leaves CAPTCHA, MFA, missing uploads, and unknown required answers for human review.
 
 ## Features
 
-- Manage and prioritize job-search websites.
-- Store site credentials locally with Windows DPAPI encryption.
-- Import structured vacancies from Gmail messages whose subject contains `AutoApply Report`.
+- Manage job-search sites and their login methods.
+- Store credentials in macOS Keychain.
+- Import vacancies from Gmail messages with the subject `AutoApply Report`.
 - Track pending, running, and completed applications in SQLite.
-- Discover new jobs from the rules in `BUSCAR_VAGAS.md` using LlamaIndex and Ollama.
-- Generate a per-job ZIP containing a resume, cover letter, and job information.
-- Inspect a signed-in LinkedIn profile and generate local optimization suggestions.
+- Discover jobs from `BUSCAR_VAGAS.md` with LlamaIndex and Ollama.
+- Generate a ZIP containing a resume, cover letter, and job information for each vacancy.
+- Analyze a signed-in LinkedIn profile with the local model.
 - Record manual application sessions for future site-specific learning.
-- Monitor CPU, memory, GPU, disk, and Ollama status.
+- Monitor CPU, memory, disk, Apple GPU identification, and Ollama status.
 
 ## Requirements
 
-AutoApply currently targets Windows because credential encryption and the desktop launcher use Windows APIs.
-
-- Windows 10 or 11
-- Python 3.11 or newer (Python 3.12 is recommended)
+- macOS Sonoma 14 or newer
+- Apple Silicon or an Intel Mac (Ollama uses CPU-only inference on Intel Macs)
+- Python 3.11 or newer; Python 3.12 is recommended
 - Google Chrome
-- [Ollama](https://ollama.com/) available on `PATH`, or configured with `AUTOAPPLY_OLLAMA_EXE`
-- Redis available on `PATH`, or configured with `AUTOAPPLY_REDIS_EXE`
-- Approximately 4 GB of free disk space for the default local model
-
-Redis is started by the desktop launcher and shown in the health panel. The backend can be run manually without Redis, although the dashboard will report it as unavailable.
+- [Ollama for macOS](https://docs.ollama.com/macos)
+- [Homebrew](https://brew.sh/) and Redis
+- Enough free disk space for the selected Ollama model
 
 ## Installation
 
-Clone the repository and enter its directory:
+Install Python and Redis with Homebrew:
 
-```powershell
-git clone https://github.com/pedrocampos0/autoapply.git
-Set-Location autoapply
+```bash
+brew install python@3.12 redis
 ```
 
-Create and activate a virtual environment:
+Install Ollama from its official macOS download, open it once, and allow it to add the `ollama` command to your `PATH` when prompted.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+Clone this repository:
+
+```bash
+git clone https://github.com/pedrocampos0/autoapply-mac.git
+cd autoapply-mac
+```
+
+Create the virtual environment and install Python dependencies:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Create the local configuration files:
+Create your private local configuration:
 
-```powershell
-Copy-Item .env.example .env
-Copy-Item data\candidate.example.json data\candidate_profile.json
+```bash
+cp .env.example .env
+cp data/candidate.example.json data/candidate_profile.json
 ```
 
-Edit `.env` and set at least `GMAIL_ACCOUNT`. Then replace every example value in `data/candidate_profile.json` with verified candidate information. Both files are ignored by Git.
+Edit `.env` and set `GMAIL_ACCOUNT`. Replace every example value in `data/candidate_profile.json` with verified candidate information. Both files are ignored by Git.
 
-Download the default Ollama model:
+Download the default local model:
 
-```powershell
+```bash
 ollama pull llama2:7b-chat-q2_K
 ```
 
-You may select another installed model through `OLLAMA_MODEL` in `.env`.
+You can use another installed model by changing `OLLAMA_MODEL` in `.env`.
 
-## Running manually
+## Run with the macOS launcher
 
-Start Ollama in one PowerShell window:
+Make the launcher executable once:
 
-```powershell
-ollama serve
+```bash
+chmod +x launcher/start-autoapply.command
 ```
 
-Start Redis in another window if you want it included in the health status:
+Start AutoApply from Terminal:
 
-```powershell
+```bash
+./launcher/start-autoapply.command
+```
+
+You can also double-click `launcher/start-autoapply.command` in Finder after it has executable permission.
+
+The launcher:
+
+1. Loads `.env`.
+2. Reuses Ollama or Redis if it finds them on their local ports; otherwise it starts them.
+3. Starts FastAPI on `127.0.0.1:8000`.
+4. Opens a dedicated Chrome profile with local remote debugging on port `9222`.
+5. Stops only the processes it started when the dedicated Chrome process closes.
+
+Logs are written to `logs/backend.log`, `logs/ollama.log`, and `logs/redis.log`.
+
+## Run manually
+
+Use separate Terminal tabs for each process.
+
+Start Ollama and Redis:
+
+```bash
+ollama serve
 redis-server --bind 127.0.0.1 --port 6379
 ```
 
-Start a dedicated Chrome instance with its debugging interface restricted to the local machine:
+Start Chrome with an isolated user-data directory. Current Chrome releases require a non-default profile for remote debugging:
 
-```powershell
-$chrome = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
-& $chrome --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --user-data-dir="$env:LOCALAPPDATA\AutoApply\ChromeProfile"
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/Library/Application Support/AutoApply/ChromeProfile" \
+  --new-window http://127.0.0.1:8000/
 ```
 
-If Chrome is installed elsewhere, update `$chrome` to its actual executable path. Sign in to Gmail, LinkedIn, and any job sites only in this dedicated Chrome profile.
+Sign in to Gmail, LinkedIn, and job sites only inside this dedicated profile.
 
-Finally, start the API from the repository root:
+From the repository root, start the API:
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```bash
+source .venv/bin/activate
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>.
-
-## Optional desktop launcher
-
-The launcher starts Ollama, Redis, FastAPI, and the dedicated Chrome profile together. Child processes are attached to a Windows Job Object so they stop when AutoApply closes.
-
-Compile it from a Developer PowerShell for Visual Studio, or use the .NET Framework C# compiler directly:
-
-```powershell
-& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
-  /nologo /target:winexe `
-  /reference:System.Windows.Forms.dll `
-  /reference:System.Drawing.dll `
-  /reference:System.Management.dll `
-  /out:AutoApply.exe launcher\AutoApplyDesktop.cs
-```
-
-Run `AutoApply.exe` from the repository root. The launcher searches `PATH` for `ollama.exe` and `redis-server.exe`. Use these environment variables when the executables or repository are elsewhere:
-
-```powershell
-$env:AUTOAPPLY_ROOT = "C:\path\to\autoapply"
-$env:AUTOAPPLY_OLLAMA_EXE = "C:\path\to\ollama.exe"
-$env:AUTOAPPLY_REDIS_EXE = "C:\path\to\redis-server.exe"
-```
+Open <http://127.0.0.1:8000>. Health information is available at <http://127.0.0.1:8000/api/status>.
 
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `GMAIL_ACCOUNT` | For Gmail imports | None | Gmail account expected in the dedicated Chrome profile. |
-| `OLLAMA_MODEL` | No | `llama2:7b-chat-q2_K` | Local model used for chat and automation. |
+| `GMAIL_ACCOUNT` | For Gmail imports | None | Account expected in the dedicated Chrome profile. |
+| `OLLAMA_MODEL` | No | `llama2:7b-chat-q2_K` | Local model used by chat and automation. |
 | `OLLAMA_URL` | No | `http://127.0.0.1:11434` | Ollama API base URL. |
 | `OLLAMA_NUM_GPU` | No | `24` | Preferred number of model layers offloaded to the GPU. |
-| `LINKEDIN_PROFILE_URL` | No | None | Exact LinkedIn profile URL when automatic navigation cannot find it. |
-| `AUTOAPPLY_PROFILE_FILE` | No | `data/candidate_profile.json` | Alternate candidate-profile JSON file. |
-| `AUTOAPPLY_ROOT` | Launcher only | Auto-detected | Repository path when the launcher is stored elsewhere. |
-| `AUTOAPPLY_CHROME_PROFILE` | Launcher only | Local AppData | Dedicated Chrome user-data directory. |
-| `AUTOAPPLY_OLLAMA_EXE` | Launcher only | Searched on `PATH` | Full Ollama executable path. |
-| `AUTOAPPLY_REDIS_EXE` | Launcher only | Searched on `PATH` | Full Redis executable path. |
+| `LINKEDIN_PROFILE_URL` | No | None | Exact LinkedIn profile URL if automatic navigation cannot find it. |
+| `AUTOAPPLY_PROFILE_FILE` | No | `data/candidate_profile.json` | Alternate private candidate-profile file. |
+| `AUTOAPPLY_CHROME_PROFILE` | Launcher only | `~/Library/Application Support/AutoApply/ChromeProfile` | Dedicated Chrome data directory. |
+| `AUTOAPPLY_CHROME_EXECUTABLE` | Launcher only | Standard `/Applications` path | Alternate Google Chrome executable. |
 
 ## Project structure
 
 ```text
-backend/                 FastAPI API and automation services
-frontend/                Static dashboard
-launcher/                Windows desktop launcher source
-data/candidate.example.json
-                         Safe candidate-profile template
-BUSCAR_VAGAS.md          Job-discovery rules and filters
-requirements.txt         Python dependencies
+backend/                      FastAPI API and automation services
+frontend/                     Static dashboard
+launcher/start-autoapply.command
+                              macOS service launcher
+data/candidate.example.json   Safe candidate-profile template
+BUSCAR_VAGAS.md               Job discovery rules and filters
+requirements.txt              Python dependencies
 ```
 
-Runtime state is stored under `data/`, `logs/`, and `tmp/`. These paths, `.env`, the real candidate profile, generated databases, recordings, and compiled executables are excluded from version control.
+Runtime state is stored under `data/`, `logs/`, and `tmp/`. The real candidate profile, `.env`, SQLite files, recordings, browser data, and logs are excluded from version control.
 
 ## Privacy and security
 
-- API, database, Ollama, and Chrome debugging interfaces bind to loopback addresses.
-- Site passwords are encrypted through DPAPI and can only be decrypted by the same Windows user account.
+- The API, Ollama, Redis, and Chrome debugging endpoints use loopback addresses.
+- Credentials are stored in macOS Keychain through Python `keyring`.
 - Candidate identity data remains in a local ignored JSON file.
 - AI prompts are sent to the configured Ollama server, not to OpenAI.
-- Successful AI interactions and unexpected errors are logged locally; credentials and cookies are not intentionally included.
-- Treat the dedicated Chrome profile, local database, candidate profile, and logs as sensitive data and do not share them.
+- Chrome automation uses a dedicated profile instead of your normal browsing profile.
+- Logs may contain prompts, model responses, job details, and error traces; treat them as sensitive.
+- macOS may ask whether Python can access an `AutoApply` Keychain item. Approve access for the Python executable inside this project's virtual environment.
 
-## Development checks
+## Validation
 
-From the repository root, verify Python syntax without creating bytecode files:
+Check Python and JavaScript syntax:
 
-```powershell
-$env:PYTHONDONTWRITEBYTECODE = "1"
-python -m compileall -q backend
+```bash
+PYTHONDONTWRITEBYTECODE=1 python -m compileall -q backend
+node --check frontend/assets/app-v2.js
+zsh -n launcher/start-autoapply.command
 ```
-
-The application exposes health information at <http://127.0.0.1:8000/api/status> once it is running.
 
 ## Troubleshooting
 
-- **Candidate profile not found:** copy `data/candidate.example.json` to `data/candidate_profile.json` and fill it in.
-- **Gmail account rejected:** confirm `GMAIL_ACCOUNT` matches the account signed in to the dedicated Chrome profile.
-- **Chrome automation offline:** close other dedicated instances and start Chrome with remote debugging on port `9222`.
-- **Ollama unavailable:** run `ollama serve`, verify `OLLAMA_URL`, and confirm the selected model is installed.
-- **Launcher cannot find a service:** place it on `PATH` or set the corresponding `AUTOAPPLY_*_EXE` variable.
-- **PowerShell blocks virtual-environment activation:** run `Set-ExecutionPolicy -Scope Process Bypass`, then activate the environment again.
+- **`python3.12` is not found:** run `brew --prefix python@3.12` and ensure its `bin` directory is on `PATH`, or use a supported `python3` installation.
+- **Keychain access fails:** open Keychain Access, confirm the login keychain is unlocked, and retry from the same virtual environment.
+- **Candidate profile is missing:** copy `data/candidate.example.json` to `data/candidate_profile.json` and fill it in.
+- **Gmail account is rejected:** ensure `GMAIL_ACCOUNT` matches the account signed in to the dedicated Chrome profile.
+- **Chrome automation is offline:** close the dedicated Chrome instance, then restart it through the launcher.
+- **Ollama is unavailable:** open the Ollama app or run `ollama serve`, and verify that your configured model is installed.
+- **Redis is unavailable:** run `brew install redis`; the launcher will start a project-local Redis process.
+- **Port 8000 is busy:** stop the existing process before starting the launcher.
+
+## Platform notes
+
+The macOS dashboard reports the Apple GPU name when available. macOS does not expose a stable per-process GPU utilization metric through the APIs used here, so GPU percentage and dedicated VRAM are not reported for Apple Silicon. Memory metrics include the system's unified memory through `psutil`.

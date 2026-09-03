@@ -40,11 +40,6 @@ chrome-profile/
 redis-data/
 site-videos/
 
-# Compiled launcher artifacts
-AutoApply.exe
-launcher/*.exe
-launcher/*.pdb
-
 # Superseded local prototypes
 backend/app.py
 frontend/assets/app.js
@@ -58,3 +53,5 @@ frontend/assets/styles.css
 .DS_Store
 Thumbs.db
 Desktop.ini
+.AppleDouble
+.LSOverride

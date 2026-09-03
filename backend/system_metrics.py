@@ -1,80 +1,79 @@
 from __future__ import annotations
 
-import ctypes
 import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-
-class MemoryStatus(ctypes.Structure):
-    _fields_ = [
-        ("length", ctypes.c_ulong),
-        ("memory_load", ctypes.c_ulong),
-        ("total_physical", ctypes.c_ulonglong),
-        ("available_physical", ctypes.c_ulonglong),
-        ("total_page_file", ctypes.c_ulonglong),
-        ("available_page_file", ctypes.c_ulonglong),
-        ("total_virtual", ctypes.c_ulonglong),
-        ("available_virtual", ctypes.c_ulonglong),
-        ("available_extended_virtual", ctypes.c_ulonglong),
-    ]
-
-
-class FileTime(ctypes.Structure):
-    _fields_ = [("low", ctypes.c_ulong), ("high", ctypes.c_ulong)]
-
-
-def _filetime_value(value: FileTime) -> int:
-    return (value.high << 32) | value.low
-
-
-def _cpu_snapshot() -> tuple[int, int, int]:
-    idle, kernel, user = FileTime(), FileTime(), FileTime()
-    if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-        return 0, 0, 0
-    return _filetime_value(idle), _filetime_value(kernel), _filetime_value(user)
-
+import psutil
 
 def cpu_metrics() -> dict:
-    first = _cpu_snapshot()
-    time.sleep(0.15)
-    second = _cpu_snapshot()
-    idle = second[0] - first[0]
-    total = (second[1] - first[1]) + (second[2] - first[2])
-    usage = 0 if total <= 0 else max(0, min(100, (total - idle) * 100 / total))
-    return {"usage_percent": round(usage, 1), "logical_cores": os.cpu_count() or 0}
+    return {
+        "usage_percent": round(psutil.cpu_percent(interval=0.15), 1),
+        "logical_cores": psutil.cpu_count(logical=True) or os.cpu_count() or 0,
+    }
 
 
 def memory_metrics() -> dict:
-    status = MemoryStatus()
-    status.length = ctypes.sizeof(MemoryStatus)
-    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
-    used = status.total_physical - status.available_physical
+    memory = psutil.virtual_memory()
+    used = memory.total - memory.available
     return {
-        "usage_percent": status.memory_load,
-        "total_gb": round(status.total_physical / 1024**3, 2),
+        "usage_percent": round(memory.percent, 1),
+        "total_gb": round(memory.total / 1024**3, 2),
         "used_gb": round(used / 1024**3, 2),
-        "available_gb": round(status.available_physical / 1024**3, 2),
+        "available_gb": round(memory.available / 1024**3, 2),
     }
 
 
 def disk_metrics() -> dict:
     project_root = Path(__file__).resolve().parents[1]
-    usage = shutil.disk_usage(project_root.anchor or project_root)
+    usage = psutil.disk_usage(project_root.anchor or project_root)
     return {
-        "usage_percent": round(usage.used * 100 / usage.total, 1),
+        "usage_percent": round(usage.percent, 1),
         "total_gb": round(usage.total / 1024**3, 1),
         "used_gb": round(usage.used / 1024**3, 1),
         "free_gb": round(usage.free / 1024**3, 1),
     }
 
 
+def _apple_gpu_name() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType", "-json"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=True,
+        )
+        displays = json.loads(result.stdout).get("SPDisplaysDataType", [])
+        return next(
+            (str(item.get("sppci_model") or item.get("_name")) for item in displays if item.get("sppci_model") or item.get("_name")),
+            None,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+
+
 def gpu_metrics() -> dict | None:
+    apple_gpu = _apple_gpu_name()
+    if apple_gpu:
+        # macOS does not expose stable GPU utilization or unified-memory figures here.
+        return {
+            "name": apple_gpu,
+            "utilization_available": False,
+            "usage_percent": 0,
+            "memory_total_mb": 0,
+            "memory_used_mb": 0,
+            "memory_usage_percent": 0,
+        }
+
     candidates = [
         shutil.which("nvidia-smi"),
         r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
@@ -99,6 +98,7 @@ def gpu_metrics() -> dict | None:
         name, total, used, utilization = [item.strip() for item in result.stdout.splitlines()[0].split(",")]
         return {
             "name": name,
+            "utilization_available": True,
             "usage_percent": float(utilization),
             "memory_total_mb": int(total),
             "memory_used_mb": int(used),
@@ -109,8 +109,9 @@ def gpu_metrics() -> dict | None:
 
 
 def ollama_metrics() -> dict:
+    base_url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     try:
-        with urlopen("http://127.0.0.1:11434/api/ps", timeout=2) as response:
+        with urlopen(f"{base_url}/api/ps", timeout=2) as response:
             data = json.loads(response.read().decode("utf-8"))
     except (OSError, URLError, json.JSONDecodeError):
         return {"online": False, "models": []}
